@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Planned</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Planned">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header>
+    <button id="date" type="button" aria-label="Jump to today">
+      <span id="dateMain">Today</span>
+      <span id="dateSub"></span>
+    </button>
+    <div class="controls">
+      <button id="prev" class="icon" type="button" aria-label="Previous day">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
+      </button>
+      <button id="next" class="icon" type="button" aria-label="Next day">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
+      </button>
+      <button id="tpl" class="icon" type="button" aria-label="Templates">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="3"/><path d="M16 8V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v6a3 3 0 0 0 3 3h1"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main id="list" aria-live="polite"></main>
+
+  <footer>
+    <input id="add" type="text" enterkeyhint="enter" autocomplete="off" autocapitalize="sentences" spellcheck="false" placeholder="Add… (0930 gym)" aria-label="Add item">
+  </footer>
+
+  <div id="scrim"></div>
+
+  <section id="sheet" aria-hidden="true" aria-label="Templates">
+    <div class="sheet-head">
+      <h2>Templates</h2>
+      <button id="sheetDone" type="button">Done</button>
+    </div>
+    <div id="slots"></div>
+  </section>
+
+  <div id="toast" role="status">
+    <span id="toastMsg"></span>
+    <button id="toastUndo" type="button">Undo</button>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
