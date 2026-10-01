@@ -5,6 +5,7 @@
   <title>Planned</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#000000">
+  <meta name="color-scheme" content="dark">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -30,21 +31,50 @@
       <button id="tpl" class="icon" type="button" aria-label="Templates">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="3"/><path d="M16 8V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v6a3 3 0 0 0 3 3h1"/></svg>
       </button>
+      <button id="add" type="button" aria-label="Add block">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
     </div>
   </header>
 
-  <main id="list" aria-live="polite"></main>
-
-  <footer>
-    <input id="add" type="text" enterkeyhint="enter" autocomplete="off" autocapitalize="sentences" spellcheck="false" placeholder="Add… (0930 gym)" aria-label="Add item">
-  </footer>
+  <div class="stage">
+    <main id="scroll">
+      <div id="tl">
+        <div id="grid"></div>
+        <div id="blocks"></div>
+        <div id="nowLine"></div>
+        <div id="nowPill"></div>
+      </div>
+    </main>
+    <div id="hint">Tap the timeline to plan a block</div>
+  </div>
 
   <div id="scrim"></div>
 
-  <section id="sheet" aria-hidden="true" aria-label="Templates">
+  <!-- Block editor -->
+  <section id="editSheet" class="sheet" aria-label="Edit block" inert>
+    <input id="eTitle" class="title-input" type="text" placeholder="Title" enterkeyhint="done" autocomplete="off" autocapitalize="sentences" spellcheck="false" aria-label="Title">
+    <div class="times">
+      <label><span>Start</span><input id="eStart" type="time"></label>
+      <label><span>End</span><input id="eEnd" type="time"></label>
+    </div>
+    <div id="chips" class="chips">
+      <button type="button" class="chip" data-d="15">15m</button>
+      <button type="button" class="chip" data-d="30">30m</button>
+      <button type="button" class="chip" data-d="60">1h</button>
+      <button type="button" class="chip" data-d="120">2h</button>
+    </div>
+    <div class="actions">
+      <button id="eDelete" type="button" class="btn quiet">Delete</button>
+      <button id="eDone" type="button" class="btn primary">Done</button>
+    </div>
+  </section>
+
+  <!-- Templates -->
+  <section id="tplSheet" class="sheet" aria-label="Templates" inert>
     <div class="sheet-head">
       <h2>Templates</h2>
-      <button id="sheetDone" type="button">Done</button>
+      <button id="tplDone" type="button" class="link">Done</button>
     </div>
     <div id="slots"></div>
   </section>

@@ -4,27 +4,50 @@
   /* ================= DOM ================= */
   const $ = (s) => document.querySelector(s);
   const el = {
-    list: $('#list'),
-    add: $('#add'),
-    date: $('#date'),
-    dateMain: $('#dateMain'),
-    dateSub: $('#dateSub'),
-    prev: $('#prev'),
-    next: $('#next'),
-    tpl: $('#tpl'),
-    sheet: $('#sheet'),
-    sheetDone: $('#sheetDone'),
-    slots: $('#slots'),
+    date: $('#date'), dateMain: $('#dateMain'), dateSub: $('#dateSub'),
+    prev: $('#prev'), next: $('#next'), tpl: $('#tpl'), add: $('#add'),
+    scroll: $('#scroll'), tl: $('#tl'), grid: $('#grid'), blocks: $('#blocks'),
+    nowLine: $('#nowLine'), nowPill: $('#nowPill'), hint: $('#hint'),
     scrim: $('#scrim'),
-    toast: $('#toast'),
-    toastMsg: $('#toastMsg'),
-    toastUndo: $('#toastUndo'),
+    edit: $('#editSheet'), eTitle: $('#eTitle'), eStart: $('#eStart'), eEnd: $('#eEnd'),
+    chips: $('#chips'), eDelete: $('#eDelete'), eDone: $('#eDone'),
+    tplSheet: $('#tplSheet'), tplDone: $('#tplDone'), slots: $('#slots'),
+    toast: $('#toast'), toastMsg: $('#toastMsg'), toastUndo: $('#toastUndo'),
   };
 
+  function mk(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  /* ================= Constants + time math ================= */
+  const HOUR = 72;    // px per hour
+  const PAD = 12;     // top/bottom padding inside the timeline
+  const SNAP = 15;    // minutes
+  const MIN_DUR = 15; // minimum block length
+  const DAY = 1440;
+
+  const Y = (m) => PAD + (m * HOUR) / 60;
+  const fromY = (y) => ((y - PAD) * 60) / HOUR;
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  const snap = (m) => Math.round(m / SNAP) * SNAP;
+  const pad = (n) => String(n).padStart(2, '0');
+  const fmt = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+  const toInput = (m) => (m >= DAY ? '23:59' : fmt(m));
+  const fromInput = (v, isEnd) => {
+    if (!v) return null;
+    if (isEnd && v === '23:59') return DAY;
+    const [h, m] = v.split(':').map(Number);
+    return h * 60 + m;
+  };
+  const nowMinutes = () => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); };
+
   /* ================= State ================= */
-  // { days: { "YYYY-MM-DD": [{id, text, time|null, done}] },
-  //   templates: [ null | {name, items:[{text, time}]} ] x3 }
-  const KEY = 'planned.v1';
+  // { days: { "YYYY-MM-DD": [{ id, title, start, end }] },   (minutes from midnight)
+  //   templates: [ null | { name, items: [{ title, start, end }] } ] x3 }
+  const KEY = 'planned.v2';
 
   function load() {
     try {
@@ -34,270 +57,419 @@
         s.templates.length = 3; // hard cap: 3 slots
         return s;
       }
-    } catch (e) { /* fall through to fresh state */ }
+    } catch (e) { /* fresh state below */ }
     return { days: {}, templates: [null, null, null] };
   }
-
   function save() {
-    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* storage full or blocked */ }
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* blocked or full */ }
   }
-
   const state = load();
 
   /* ================= Dates ================= */
-  const pad = (n) => String(n).padStart(2, '0');
   const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const fromIso = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
   const shift = (s, n) => { const d = fromIso(s); d.setDate(d.getDate() + n); return iso(d); };
-  const hhmm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
   let today = iso(new Date());
   let cur = today;
 
-  /* ================= Helpers ================= */
   const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36);
   const dayItems = (d) => state.days[d] || [];
+  const item = (id) => dayItems(cur).find((x) => x.id === id);
 
-  // Timed items first (by time), then untimed in creation order.
-  function sorted(d) {
-    return dayItems(d)
-      .map((it, i) => ({ it, i }))
-      .sort((x, y) => {
-        const a = x.it.time, b = y.it.time;
-        if (a && b) return a.localeCompare(b) || x.i - y.i;
-        if (a) return -1;
-        if (b) return 1;
-        return x.i - y.i;
-      })
-      .map((o) => o.it);
+  /* ================= Grid (built once) ================= */
+  function buildGrid() {
+    el.tl.style.height = (24 * HOUR + PAD * 2) + 'px';
+    const f = document.createDocumentFragment();
+    for (let h = 0; h <= 24; h++) {
+      const line = mk('div', 'hl');
+      line.style.top = Y(h * 60) + 'px';
+      f.append(line);
+      if (h < 24) {
+        const label = mk('div', 'hlabel', fmt(h * 60));
+        label.style.top = Y(h * 60) + 'px';
+        const half = mk('div', 'hl half');
+        half.style.top = Y(h * 60 + 30) + 'px';
+        f.append(label, half);
+      }
+    }
+    el.grid.append(f);
   }
 
-  // "0930 gym" / "9:30 gym" -> { time: "09:30", text: "gym" }
-  function parse(raw) {
-    const s = raw.trim();
-    const m = s.match(/^(\d{1,2}):(\d{2})\s+(.+)$/) || s.match(/^(\d{2})(\d{2})\s+(.+)$/);
-    if (m) {
-      const h = +m[1], mi = +m[2];
-      if (h < 24 && mi < 60) return { time: `${pad(h)}:${pad(mi)}`, text: m[3].trim() };
-    }
-    return { time: null, text: s };
+  /* ================= Overlap layout ================= */
+  // Overlapping blocks share the row side by side.
+  function layout(list) {
+    const out = [];
+    let cluster = [], clusterEnd = -1;
+    const flush = () => {
+      const cols = [];
+      cluster.forEach((b) => {
+        let c = cols.findIndex((end) => end <= b.start);
+        if (c < 0) { c = cols.length; cols.push(0); }
+        cols[c] = b.end;
+        b.col = c;
+      });
+      cluster.forEach((b) => { b.cols = cols.length; });
+      out.push(...cluster);
+      cluster = [];
+    };
+    list.forEach((b) => {
+      if (cluster.length && b.start >= clusterEnd) { flush(); clusterEnd = -1; }
+      cluster.push(b);
+      clusterEnd = Math.max(clusterEnd, b.end);
+    });
+    if (cluster.length) flush();
+    return out;
   }
 
   /* ================= Render ================= */
-  let dragging = false;
+  function geom(d, s, e) {
+    const h = Math.max(((e - s) * HOUR) / 60 - 2, 22);
+    d.style.top = (Y(s) + 1) + 'px';
+    d.style.height = h + 'px';
+    d.classList.toggle('short', h < 48);
+    d.classList.toggle('tiny', h < 30);
+    d.querySelector('.time').textContent = `${fmt(s)}–${fmt(e)}`;
+  }
 
-  function render(scrollId) {
+  function buildBlock(b, status) {
+    const d = mk('div', 'block' + (status ? ' ' + status : '') + (b.cols > 1 ? ' multi' : ''));
+    d.dataset.id = b.id;
+    d.style.left = `${(b.col / b.cols) * 100}%`;
+    d.style.width = `calc(${100 / b.cols}% - 4px)`;
+    const t = mk('div', 'title', b.title || 'New block');
+    if (!b.title) t.classList.add('placeholder');
+    const grip = mk('div', 'grip');
+    d.append(t, mk('div', 'time'), grip);
+    geom(d, b.start, b.end);
+    wireBlock(d, b.id, grip);
+    return d;
+  }
+
+  function render(opts) {
+    // header
     const d = fromIso(cur);
     const diff = Math.round((d - fromIso(today)) / 864e5);
     const rel = { '-1': 'Yesterday', '0': 'Today', '1': 'Tomorrow' }[diff];
     el.dateMain.textContent = rel || d.toLocaleDateString(undefined, { weekday: 'long' });
     el.dateSub.textContent = rel
-      ? d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })
+      ? d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })
       : d.toLocaleDateString(undefined, { day: 'numeric', month: 'long' });
 
-    const items = sorted(cur);
-    el.list.replaceChildren();
+    // blocks
+    const items = dayItems(cur).map((x) => ({ ...x })).sort((a, b) => a.start - b.start || a.end - b.end);
+    const nowMin = nowMinutes();
+    el.blocks.replaceChildren();
+    layout(items).forEach((b) => {
+      let status = '';
+      if (cur === today) status = b.end <= nowMin ? 'past' : b.start <= nowMin ? 'now' : '';
+      el.blocks.append(buildBlock(b, status));
+    });
 
-    if (!items.length) {
-      const e = document.createElement('div');
-      e.className = 'empty';
-      e.textContent = 'Nothing planned';
-      el.list.append(e);
-      return;
+    // now marker
+    const isToday = cur === today;
+    el.nowLine.style.display = el.nowPill.style.display = isToday ? 'block' : 'none';
+    if (isToday) {
+      const y = Y(nowMin) + 'px';
+      el.nowLine.style.top = y;
+      el.nowPill.style.top = y;
+      el.nowPill.textContent = fmt(nowMin);
     }
 
-    let nextId = null;
-    if (cur === today) {
-      const now = hhmm(new Date());
-      const n = items.find((i) => i.time && !i.done && i.time >= now);
-      nextId = n ? n.id : null;
-    }
-
-    items.forEach((it) => el.list.append(buildRow(it, it.id === nextId)));
-
-    if (scrollId) {
-      const t = el.list.querySelector(`[data-id="${scrollId}"]`);
-      if (t) t.scrollIntoView({ block: 'nearest' });
-    }
+    el.hint.classList.toggle('on', items.length === 0);
+    if (opts && opts.scroll) scrollDefault();
   }
 
-  function buildRow(it, isNext) {
-    const row = document.createElement('div');
-    row.className = 'row';
-    row.dataset.id = it.id;
-
-    const bg = document.createElement('div');
-    bg.className = 'del';
-    bg.textContent = 'Delete';
-
-    const fg = document.createElement('div');
-    fg.className = 'item' + (it.done ? ' done' : '') + (isNext ? ' next' : '');
-
-    const chk = document.createElement('div');
-    chk.className = 'check';
-
-    const txt = document.createElement('div');
-    txt.className = 'text';
-    txt.textContent = it.text;
-
-    fg.append(chk, txt);
-
-    if (it.time) {
-      const t = document.createElement('div');
-      t.className = 'time';
-      t.textContent = it.time;
-      fg.append(t);
+  function scrollDefault() {
+    let m;
+    if (cur === today) m = nowMinutes() - 90;
+    else {
+      const items = dayItems(cur);
+      m = items.length ? Math.min(...items.map((x) => x.start)) - 60 : 6 * 60 - 30;
     }
-
-    row.append(bg, fg);
-    attachSwipe(row, fg, it.id);
-    return row;
+    el.scroll.scrollTop = Math.max(0, Y(Math.max(0, m)) - 8);
   }
 
-  /* ================= Actions ================= */
-  function addItem(raw) {
-    const { time, text } = parse(raw);
-    if (!text) return;
-    const it = { id: uid(), text, time, done: false };
+  function ensureVisible(it) {
+    const sc = el.scroll;
+    const avail = sc.clientHeight - el.edit.offsetHeight; // part of the timeline not under the sheet
+    const top = Y(it.start), bot = Y(it.end);
+    if (top < sc.scrollTop + 8 || bot > sc.scrollTop + avail - 8) sc.scrollTop = Math.max(0, top - 24);
+  }
+
+  /* ================= Create / delete ================= */
+  function createAt(start) {
+    const it = { id: uid(), title: '', start, end: Math.min(start + 60, DAY) };
     (state.days[cur] ||= []).push(it);
     save();
-    render(it.id);
-  }
-
-  function toggle(id) {
-    const it = dayItems(cur).find((x) => x.id === id);
-    if (!it) return;
-    it.done = !it.done;
-    save();
     render();
+    openEditor(it.id, true);
   }
 
   function removeItem(id) {
     const day = cur;
     const arr = state.days[day] || [];
     const i = arr.findIndex((x) => x.id === id);
-    if (i < 0) return;
+    if (i < 0) return null;
     const [it] = arr.splice(i, 1);
     if (!arr.length) delete state.days[day];
     save();
+    return { it, day };
+  }
 
+  function deleteWithUndo(id) {
+    const r = removeItem(id);
+    if (!r) return;
+    render();
     toast('Deleted', () => {
-      const a = (state.days[day] ||= []);
-      a.splice(Math.min(i, a.length), 0, it);
+      (state.days[r.day] ||= []).push(r.it);
       save();
-      render(cur === day ? it.id : undefined);
+      if (cur === r.day) render();
     });
   }
 
-  /* ================= Swipe to delete ================= */
-  function attachSwipe(row, fg, id) {
-    let pid = null, sx = 0, sy = 0, dx = 0, t0 = 0, lock = null, swiped = false;
+  // Tap empty timeline -> new block at that quarter-hour
+  el.tl.addEventListener('click', (e) => {
+    if (justDragged || e.target.closest('.block')) return;
+    const m = Math.floor(fromY(e.clientY - el.tl.getBoundingClientRect().top) / SNAP) * SNAP;
+    createAt(clamp(m, 0, DAY - SNAP));
+  });
 
-    fg.addEventListener('pointerdown', (e) => {
-      if (e.button > 0) return;
-      pid = e.pointerId;
-      sx = e.clientX; sy = e.clientY;
-      dx = 0; lock = null; t0 = Date.now();
-      swiped = false;
-      dragging = true;
-      fg.style.transition = 'none';
+  // "+" -> next quarter-hour today, 09:00 on other days
+  el.add.addEventListener('click', () => {
+    const s = cur === today ? Math.ceil(nowMinutes() / SNAP) * SNAP : 9 * 60;
+    createAt(clamp(s, 0, DAY - SNAP));
+  });
+
+  /* ================= Move + resize ================= */
+  let drag = null, justDragged = false, raf = 0, lastY = 0;
+  const tlY = (cy) => cy - el.tl.getBoundingClientRect().top;
+
+  // Once a long-press has lifted a block, stop the page from scrolling under the finger.
+  document.addEventListener('touchmove', (e) => { if (drag) e.preventDefault(); }, { passive: false });
+
+  function wireBlock(d, id, grip) {
+    let timer = null, pid = null, sx = 0, sy = 0, cx = 0, cy = 0;
+    const cancelTimer = () => { clearTimeout(timer); timer = null; };
+
+    // Long-press the body to lift and move
+    d.addEventListener('pointerdown', (e) => {
+      if (e.button > 0 || e.target === grip) return;
+      pid = e.pointerId; sx = cx = e.clientX; sy = cy = e.clientY;
+      cancelTimer();
+      timer = setTimeout(() => {
+        timer = null;
+        const it = item(id);
+        if (!it) return;
+        drag = { type: 'move', id, d, pid, dur: it.end - it.start, cur: it.start, grab: tlY(cy) - Y(it.start) };
+        lastY = cy;
+        d.classList.add('lifted');
+        try { d.setPointerCapture(pid); } catch (_) { /* pointer already gone */ }
+        startLoop();
+      }, 320);
     });
 
-    fg.addEventListener('pointermove', (e) => {
+    d.addEventListener('pointermove', (e) => {
       if (e.pointerId !== pid) return;
-      const mx = e.clientX - sx, my = e.clientY - sy;
-      if (!lock) {
-        if (Math.abs(mx) < 6 && Math.abs(my) < 6) return;
-        lock = Math.abs(mx) > Math.abs(my) ? 'x' : 'y';
-        if (lock === 'x') fg.setPointerCapture(pid);
-      }
-      if (lock !== 'x') return;
-      dx = Math.min(0, mx); // left only
-      fg.style.transform = `translateX(${dx}px)`;
+      cx = e.clientX; cy = e.clientY;
+      if (drag && drag.type === 'move') { lastY = cy; applyMove(); return; }
+      if (timer && Math.hypot(cx - sx, cy - sy) > 8) cancelTimer(); // it's a scroll, not a lift
     });
 
-    const end = (e) => {
+    const up = (e) => {
       if (e.pointerId !== pid) return;
+      cancelTimer();
       pid = null;
-      dragging = false;
-      fg.style.transition = '';
-      swiped = lock === 'x';
-
-      const flick = dx < -50 && Date.now() - t0 < 220;
-      const commit = e.type === 'pointerup' && lock === 'x' && (dx < -100 || flick);
-
-      if (commit) {
-        fg.style.transform = `translateX(-${row.offsetWidth}px)`;
-        row.style.height = row.offsetHeight + 'px';
-        void row.offsetHeight; // force reflow so the collapse animates
-        row.classList.add('gone');
-        removeItem(id);
-        setTimeout(() => { if (row.isConnected) render(); }, 200);
-      } else {
-        fg.style.transform = '';
-      }
+      if (drag && drag.type === 'move') endDrag(e.type === 'pointerup');
     };
+    d.addEventListener('pointerup', up);
+    d.addEventListener('pointercancel', up);
+    d.addEventListener('contextmenu', (e) => e.preventDefault());
 
-    fg.addEventListener('pointerup', end);
-    fg.addEventListener('pointercancel', end);
+    // Tap -> edit
+    d.addEventListener('click', () => { if (!justDragged) openEditor(id, false); });
 
-    // Tap anywhere on the row toggles done (ignored right after a swipe)
-    fg.addEventListener('click', () => {
-      if (swiped) { swiped = false; return; }
-      toggle(id);
+    // Bottom grip -> resize (touch-action:none, so it never scrolls)
+    grip.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const it = item(id);
+      if (!it) return;
+      drag = { type: 'resize', id, d, pid: e.pointerId, start: it.start, cur: it.end, off: Y(it.end) - tlY(e.clientY) };
+      lastY = e.clientY;
+      grip.setPointerCapture(e.pointerId);
+      startLoop();
     });
+    grip.addEventListener('pointermove', (e) => {
+      if (drag && drag.type === 'resize' && e.pointerId === drag.pid) { lastY = e.clientY; applyResize(); }
+    });
+    const gend = (e) => {
+      if (drag && drag.type === 'resize' && e.pointerId === drag.pid) endDrag(e.type === 'pointerup');
+    };
+    grip.addEventListener('pointerup', gend);
+    grip.addEventListener('pointercancel', gend);
   }
 
-  /* ================= Toast ================= */
-  let toastTimer = null, undoFn = null;
-
-  function toast(msg, undo) {
-    el.toastMsg.textContent = msg;
-    undoFn = undo || null;
-    el.toastUndo.hidden = !undo;
-    el.toast.classList.add('show');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(hideToast, 4000);
+  function applyMove() {
+    const s = clamp(snap(fromY(tlY(lastY) - drag.grab)), 0, DAY - drag.dur);
+    if (s !== drag.cur) { drag.cur = s; geom(drag.d, s, s + drag.dur); }
   }
 
-  function hideToast() {
-    el.toast.classList.remove('show');
-    undoFn = null;
+  function applyResize() {
+    const e = clamp(snap(fromY(tlY(lastY) + drag.off)), drag.start + MIN_DUR, DAY);
+    if (e !== drag.cur) { drag.cur = e; geom(drag.d, drag.start, e); }
   }
 
-  el.toastUndo.addEventListener('click', () => {
-    const f = undoFn;
-    hideToast();
-    if (f) f();
+  function endDrag(commit) {
+    const dg = drag;
+    drag = null;
+    cancelAnimationFrame(raf);
+    justDragged = true;
+    setTimeout(() => { justDragged = false; }, 60);
+    const it = item(dg.id);
+    if (commit && it) {
+      if (dg.type === 'move') { it.start = dg.cur; it.end = dg.cur + dg.dur; }
+      else it.end = dg.cur;
+      save();
+    }
+    render();
+  }
+
+  // Auto-scroll while dragging near the top/bottom edge
+  function startLoop() {
+    cancelAnimationFrame(raf);
+    const step = () => {
+      if (!drag) return;
+      const r = el.scroll.getBoundingClientRect();
+      let v = 0;
+      if (lastY < r.top + 70) v = -Math.min(14, (r.top + 70 - lastY) / 5);
+      else if (lastY > r.bottom - 70) v = Math.min(14, (lastY - (r.bottom - 70)) / 5);
+      if (v) {
+        el.scroll.scrollTop += v;
+        if (drag.type === 'move') applyMove(); else applyResize();
+      }
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+  }
+
+  /* ================= Sheets ================= */
+  function show(n) {
+    n.removeAttribute('inert');
+    n.classList.add('open');
+    el.scrim.classList.add('open');
+  }
+  function hide(n) {
+    n.classList.remove('open');
+    n.setAttribute('inert', '');
+    el.scrim.classList.remove('open');
+  }
+  const tplOpen = () => el.tplSheet.classList.contains('open');
+
+  function closeAny() {
+    if (editing) closeEditor();
+    else if (tplOpen()) hide(el.tplSheet);
+  }
+  el.scrim.addEventListener('click', closeAny);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAny(); });
+
+  /* ================= Block editor ================= */
+  let editing = null; // { id, isNew }
+
+  function syncChips(it) {
+    const dur = it.end - it.start;
+    el.chips.querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', +c.dataset.d === dur));
+  }
+
+  function openEditor(id, isNew) {
+    const it = item(id);
+    if (!it) return;
+    editing = { id, isNew };
+    el.eTitle.value = it.title;
+    el.eStart.value = toInput(it.start);
+    el.eEnd.value = toInput(it.end);
+    syncChips(it);
+    show(el.edit);
+    ensureVisible(it);
+    if (isNew) el.eTitle.focus({ preventScroll: true });
+  }
+
+  function closeEditor() {
+    if (!editing) return;
+    const { id, isNew } = editing;
+    editing = null;
+    const it = item(id);
+    if (it) {
+      const t = el.eTitle.value.trim();
+      if (!t && isNew) removeItem(id);          // never typed a title: discard
+      else { it.title = t || 'Untitled'; save(); }
+    }
+    hide(el.edit);
+    el.eTitle.blur();
+    render();
+  }
+
+  el.eTitle.addEventListener('input', () => {
+    const it = editing && item(editing.id);
+    if (!it) return;
+    it.title = el.eTitle.value;
+    save();
+    render();
+  });
+  el.eTitle.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); closeEditor(); }
+  });
+
+  // Changing start keeps the duration; changing end can't go before start.
+  el.eStart.addEventListener('input', () => {
+    const it = editing && item(editing.id);
+    const v = fromInput(el.eStart.value, false);
+    if (!it || v == null) return;
+    const dur = it.end - it.start;
+    it.start = clamp(v, 0, DAY - MIN_DUR);
+    it.end = Math.min(it.start + dur, DAY);
+    el.eEnd.value = toInput(it.end);
+    syncChips(it); save(); render();
+  });
+  el.eEnd.addEventListener('input', () => {
+    const it = editing && item(editing.id);
+    const v = fromInput(el.eEnd.value, true);
+    if (!it || v == null) return;
+    it.end = clamp(v, it.start + MIN_DUR, DAY);
+    syncChips(it); save(); render();
+  });
+  el.eEnd.addEventListener('change', () => {
+    const it = editing && item(editing.id);
+    if (it) el.eEnd.value = toInput(it.end); // snap the field back if the pick was invalid
+  });
+
+  el.chips.addEventListener('click', (e) => {
+    const c = e.target.closest('.chip');
+    const it = editing && item(editing.id);
+    if (!c || !it) return;
+    it.end = Math.min(it.start + +c.dataset.d, DAY);
+    el.eEnd.value = toInput(it.end);
+    syncChips(it); save(); render();
+  });
+
+  el.eDone.addEventListener('click', closeEditor);
+  el.eDelete.addEventListener('click', () => {
+    if (!editing) return;
+    const { id, isNew } = editing;
+    const empty = !el.eTitle.value.trim();
+    editing = null;
+    hide(el.edit);
+    el.eTitle.blur();
+    if (isNew && empty) { removeItem(id); render(); } else deleteWithUndo(id);
   });
 
   /* ================= Templates ================= */
-  function openSheet() {
-    el.add.blur();
-    renderSlots();
-    el.sheet.classList.add('open');
-    el.scrim.classList.add('open');
-    el.sheet.setAttribute('aria-hidden', 'false');
-  }
-
-  function closeSheet() {
-    el.sheet.classList.remove('open');
-    el.scrim.classList.remove('open');
-    el.sheet.setAttribute('aria-hidden', 'true');
-  }
-
-  const sheetOpen = () => el.sheet.classList.contains('open');
-
-  function mk(tag, cls, text) {
-    const n = document.createElement(tag);
-    if (cls) n.className = cls;
-    if (text != null) n.textContent = text;
-    return n;
-  }
+  el.tpl.addEventListener('click', () => { renderSlots(); show(el.tplSheet); });
+  el.tplDone.addEventListener('click', () => hide(el.tplSheet));
 
   function renderSlots() {
     el.slots.replaceChildren();
-    const dayHasItems = dayItems(cur).length > 0;
+    const hasBlocks = dayItems(cur).length > 0;
 
     state.templates.forEach((t, i) => {
       const slot = mk('div', 'slot');
@@ -314,26 +486,24 @@
           name.value = t.name;
           save();
         });
-        top.append(name, mk('span', 'slot-meta', `${t.items.length} item${t.items.length === 1 ? '' : 's'}`));
+        const n = t.items.length;
+        top.append(name, mk('span', 'slot-meta', `${n} block${n === 1 ? '' : 's'}`));
       } else {
         top.append(mk('span', 'slot-name is-empty', 'Empty'), mk('span', 'slot-meta', `Slot ${i + 1}`));
       }
 
       const acts = mk('div', 'slot-acts');
-
       if (t) {
         const apply = mk('button', 'btn primary', 'Apply');
         apply.type = 'button';
         apply.addEventListener('click', () => applyTemplate(i));
         acts.append(apply);
       }
-
       const saveBtn = mk('button', 'btn', 'Save this day');
       saveBtn.type = 'button';
-      saveBtn.disabled = !dayHasItems;
+      saveBtn.disabled = !hasBlocks;
       saveBtn.addEventListener('click', () => saveTemplate(i));
       acts.append(saveBtn);
-
       if (t) {
         const clear = mk('button', 'btn quiet', 'Clear');
         clear.type = 'button';
@@ -350,34 +520,34 @@
     const t = state.templates[i];
     if (!t || !t.items.length) return;
     const day = cur;
-    const added = t.items.map((x) => ({ id: uid(), text: x.text, time: x.time, done: false }));
+    const added = t.items.map((x) => ({ id: uid(), title: x.title, start: x.start, end: x.end }));
     (state.days[day] ||= []).push(...added);
     save();
-    closeSheet();
-    render();
+    hide(el.tplSheet);
+    render({ scroll: true });
 
     const n = added.length;
-    toast(`Added ${n} item${n === 1 ? '' : 's'}`, () => {
+    toast(`Added ${n} block${n === 1 ? '' : 's'}`, () => {
       const ids = new Set(added.map((a) => a.id));
       const left = (state.days[day] || []).filter((x) => !ids.has(x.id));
       if (left.length) state.days[day] = left; else delete state.days[day];
       save();
-      render();
+      if (cur === day) render();
     });
   }
 
   function saveTemplate(i) {
-    const items = sorted(cur).map(({ text, time }) => ({ text, time }));
+    const items = dayItems(cur)
+      .slice()
+      .sort((a, b) => a.start - b.start)
+      .map(({ title, start, end }) => ({ title, start, end }));
     if (!items.length) return;
     const prev = state.templates[i];
     const name = prev ? prev.name : `Template ${i + 1}`;
     state.templates[i] = { name, items };
     save();
-    closeSheet();
-    toast(`Saved to ${name}`, () => {
-      state.templates[i] = prev; // prev is null for a fresh slot
-      save();
-    });
+    hide(el.tplSheet);
+    toast(`Saved to ${name}`, () => { state.templates[i] = prev; save(); });
   }
 
   function clearTemplate(i) {
@@ -389,61 +559,63 @@
     toast('Template cleared', () => {
       state.templates[i] = prev;
       save();
-      if (sheetOpen()) renderSlots();
+      if (tplOpen()) renderSlots();
     });
   }
 
-  /* ================= Events ================= */
-  el.add.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' || e.isComposing) return;
-    e.preventDefault();
-    const v = el.add.value;
-    if (!v.trim()) return;
-    el.add.value = '';
-    addItem(v); // input keeps focus: rapid entry
-  });
+  /* ================= Toast ================= */
+  let toastTimer = null, undoFn = null;
 
-  el.prev.addEventListener('click', () => { cur = shift(cur, -1); render(); });
-  el.next.addEventListener('click', () => { cur = shift(cur, 1); render(); });
-  el.date.addEventListener('click', () => { cur = today; render(); });
+  function toast(msg, undo) {
+    el.toastMsg.textContent = msg;
+    undoFn = undo || null;
+    el.toastUndo.hidden = !undo;
+    el.toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(hideToast, 4000);
+  }
+  function hideToast() { el.toast.classList.remove('show'); undoFn = null; }
+  el.toastUndo.addEventListener('click', () => { const f = undoFn; hideToast(); if (f) f(); });
 
-  el.tpl.addEventListener('click', openSheet);
-  el.sheetDone.addEventListener('click', closeSheet);
-  el.scrim.addEventListener('click', closeSheet);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && sheetOpen()) closeSheet(); });
+  /* ================= Navigation ================= */
+  el.prev.addEventListener('click', () => { cur = shift(cur, -1); render({ scroll: true }); });
+  el.next.addEventListener('click', () => { cur = shift(cur, 1); render({ scroll: true }); });
+  el.date.addEventListener('click', () => { cur = today; render({ scroll: true }); });
 
-  /* ================= Day rollover + "next" refresh ================= */
+  /* ================= Clock ================= */
   function tick() {
     const t = iso(new Date());
+    let rolled = false;
     if (t !== today) {
       const wasToday = cur === today;
       today = t;
-      if (wasToday) cur = today;
+      if (wasToday) { cur = today; rolled = true; }
     }
-    if (!dragging) render();
+    if (!drag && !editing) render(rolled ? { scroll: true } : undefined);
   }
-
   document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
   setInterval(tick, 60000);
 
   /* ================= iOS keyboard fit ================= */
-  // iOS doesn't shrink the layout viewport when the keyboard opens, so the
-  // pinned input would hide behind it. Size the app to the visual viewport.
+  // iOS doesn't shrink the layout viewport when the keyboard opens. Size the app
+  // to the visual viewport so the sheet sits directly above the keyboard.
   const vv = window.visualViewport;
   function fit() {
     const h = vv ? vv.height : window.innerHeight;
     document.documentElement.style.setProperty('--app-h', h + 'px');
     document.body.classList.toggle('kb', window.innerHeight - h > 120);
     if (window.scrollY) window.scrollTo(0, 0);
+    if (editing) {
+      const it = item(editing.id);
+      if (it) requestAnimationFrame(() => ensureVisible(it));
+    }
   }
-  if (vv) {
-    vv.addEventListener('resize', fit);
-    vv.addEventListener('scroll', fit);
-  }
+  if (vv) { vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); }
   fit();
 
   /* ================= Init ================= */
-  render();
+  buildGrid();
+  render({ scroll: true });
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
